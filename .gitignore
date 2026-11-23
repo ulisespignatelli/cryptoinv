@@ -1,0 +1,9 @@
+/bin/
+/dist/
+*.out
+coverage.*
+cbom.json
+results.sarif
+node_modules/
+web/dist/
+.DS_Store

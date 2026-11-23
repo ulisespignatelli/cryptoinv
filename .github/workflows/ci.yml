@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+      - name: Formato y vet
+        run: make lint
+      - name: Tests
+        run: make test
+      - name: Compilar
+        run: make build
+
+  # La herramienta se usa a sí misma: el resultado aparece en la pestaña Security → Code scanning.
+  self-scan:
+    needs: backend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+      - run: make build
+      - name: Escaneo criptográfico
+        run: ./bin/cryptoinv scan . --asset cryptoinv --skip-tests --format sarif --output results.sarif
+      - name: CBOM
+        run: ./bin/cryptoinv scan . --asset cryptoinv --skip-tests --format cbom --output cbom.json
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: cryptoinv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cbom
+          path: cbom.json
