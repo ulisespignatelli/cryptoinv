@@ -4,6 +4,10 @@
 coverage.*
 cbom.json
 results.sarif
+.cryptoinv/
 node_modules/
 web/dist/
+# El panel compilado se genera con `make web` y se embebe al compilar el binario.
+backend/internal/adapters/httpapi/ui/dist/
 .DS_Store
+*.tsbuildinfo

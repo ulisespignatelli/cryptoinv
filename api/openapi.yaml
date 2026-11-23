@@ -1,0 +1,453 @@
+openapi: 3.1.0
+info:
+  title: cryptoinv API
+  version: 1.0.0
+  summary: Inventario criptográfico y plan de migración post-cuántica.
+  description: |
+    Contrato entre el backend (Go) y el panel (React). Es la fuente única: los tipos de TypeScript
+    del panel se generan desde este archivo (`npm run gen:api` en web/).
+
+    Las operaciones que modifican datos exigen el encabezado `X-Requested-With: cryptoinv` (defensa
+    contra CSRF) y, si el servidor se inició con token, `Authorization: Bearer <token>`.
+  license:
+    name: MIT
+servers:
+  - url: http://127.0.0.1:8080/api/v1
+tags:
+  - name: escaneos
+  - name: inventario
+  - name: sistema
+
+paths:
+  /health:
+    get:
+      tags: [sistema]
+      operationId: getHealth
+      responses:
+        "200":
+          description: Estado del servidor.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+  /catalog:
+    get:
+      tags: [sistema]
+      operationId: getCatalog
+      responses:
+        "200":
+          description: Catálogo de algoritmos con fechas de NIST.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Catalog" }
+  /overview:
+    get:
+      tags: [inventario]
+      operationId: getOverview
+      description: Estado de cada sistema según su último escaneo, con su evolución.
+      responses:
+        "200":
+          description: Vista general.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Overview" }
+  /scans:
+    get:
+      tags: [escaneos]
+      operationId: listScans
+      parameters:
+        - { name: asset, in: query, schema: { type: string }, description: Solo los escaneos de este sistema. }
+      responses:
+        "200":
+          description: Escaneos, del más reciente al más viejo.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ScanMeta" }
+    post:
+      tags: [escaneos]
+      operationId: createScan
+      description: Escanea una ruta del equipo donde corre el servidor (deshabilitado con `--no-scan`).
+      security: [{ csrf: [] }, { csrf: [], bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateScanRequest" }
+      responses:
+        "201":
+          description: Escaneo creado.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScanMeta" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /scans/import:
+    post:
+      tags: [escaneos]
+      operationId: importScan
+      description: Guarda un escaneo hecho en otro equipo o en CI (`cryptoinv scan --format json`). Se reevalúa con el catálogo del servidor.
+      security: [{ csrf: [] }, { csrf: [], bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Scan" }
+      responses:
+        "201":
+          description: Escaneo importado.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScanMeta" }
+        "400": { $ref: "#/components/responses/Error" }
+  /scans/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/ScanID" }
+    get:
+      tags: [escaneos]
+      operationId: getScan
+      responses:
+        "200":
+          description: Escaneo con la comparación contra el anterior del mismo sistema.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScanDetail" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [escaneos]
+      operationId: deleteScan
+      security: [{ csrf: [] }, { csrf: [], bearer: [] }]
+      responses:
+        "204": { description: Borrado. }
+        "404": { $ref: "#/components/responses/Error" }
+  /scans/{id}/findings:
+    parameters:
+      - { $ref: "#/components/parameters/ScanID" }
+    get:
+      tags: [inventario]
+      operationId: listFindings
+      description: Inventario filtrable. Los filtros de lista aceptan varios valores separados por coma.
+      parameters:
+        - { name: severity, in: query, schema: { type: string }, example: "critica,alta" }
+        - { name: quantum_status, in: query, schema: { type: string }, example: "vulnerable,broken" }
+        - { name: algorithm, in: query, schema: { type: string }, example: "rsa,ecdh" }
+        - { name: detector, in: query, schema: { type: string } }
+        - { name: q, in: query, schema: { type: string }, description: Busca en ruta, evidencia, contexto y algoritmo. }
+        - { name: tests, in: query, schema: { type: string, enum: [include, exclude, only], default: include } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 100 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200":
+          description: Página de hallazgos con conteos por faceta.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FindingsPage" }
+        "404": { $ref: "#/components/responses/Error" }
+  /scans/{id}/plan:
+    parameters:
+      - { $ref: "#/components/parameters/ScanID" }
+    get:
+      tags: [inventario]
+      operationId: getPlan
+      responses:
+        "200":
+          description: Plan de migración en tres olas.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MigrationPlan" }
+        "404": { $ref: "#/components/responses/Error" }
+  /scans/{id}/certificates:
+    parameters:
+      - { $ref: "#/components/parameters/ScanID" }
+    get:
+      tags: [inventario]
+      operationId: listCertificates
+      responses:
+        "200":
+          description: Certificados, los que vencen antes primero.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Certificate" }
+        "404": { $ref: "#/components/responses/Error" }
+  /scans/{id}/export:
+    parameters:
+      - { $ref: "#/components/parameters/ScanID" }
+      - { name: format, in: query, required: true, schema: { type: string, enum: [cbom, sarif, json] } }
+    get:
+      tags: [escaneos]
+      operationId: exportScan
+      responses:
+        "200":
+          description: Archivo CycloneDX 1.6 CBOM, SARIF 2.1.0 o JSON nativo.
+          content:
+            application/json:
+              schema: { type: object }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer }
+    csrf: { type: apiKey, in: header, name: X-Requested-With, description: "Siempre `cryptoinv`." }
+  parameters:
+    ScanID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[a-zA-Z0-9_-]{1,64}$" }
+  responses:
+    Error:
+      description: Error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+    Health:
+      type: object
+      required: [status, version, scan_enabled, auth_required]
+      properties:
+        status: { type: string, const: ok }
+        version: { type: string }
+        scan_enabled: { type: boolean }
+        auth_required: { type: boolean }
+
+    Severity: { type: string, enum: [critica, alta, media, baja, info] }
+    QuantumStatus: { type: string, enum: [vulnerable, weakened, resistant, broken, unknown] }
+    Primitive:
+      type: string
+      enum: [signature, key-agree, pke, kem, block-cipher, stream-cipher, ae, hash, mac, kdf, protocol, other]
+    CountMap:
+      type: object
+      additionalProperties: { type: integer }
+
+    Algorithm:
+      type: object
+      required: [id, name, family, primitive, quantum, note, nist_quantum_level]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        family: { type: string }
+        primitive: { $ref: "#/components/schemas/Primitive" }
+        quantum: { $ref: "#/components/schemas/QuantumStatus" }
+        deprecated_after: { type: integer }
+        disallowed_after: { type: integer }
+        min_key_bits: { type: integer }
+        replacement: { type: string }
+        note: { type: string }
+        nist_quantum_level: { type: integer, minimum: 0, maximum: 5 }
+        aliases: { type: array, items: { type: string } }
+    Catalog:
+      type: object
+      required: [version, sources, algorithms]
+      properties:
+        version: { type: string }
+        sources: { type: array, items: { type: string } }
+        algorithms: { type: array, items: { $ref: "#/components/schemas/Algorithm" } }
+
+    Location:
+      type: object
+      required: [path]
+      properties:
+        path: { type: string }
+        line: { type: integer }
+        column: { type: integer }
+    CertInfo:
+      type: object
+      required: [subject, issuer, not_before, not_after, signature_algorithm, self_signed]
+      properties:
+        subject: { type: string }
+        issuer: { type: string }
+        not_before: { type: string, format: date-time }
+        not_after: { type: string, format: date-time }
+        signature_algorithm: { type: string }
+        self_signed: { type: boolean }
+    Assessment:
+      type: object
+      required: [score, severity, quantum_status, reasons]
+      properties:
+        score: { type: integer, minimum: 0, maximum: 100 }
+        severity: { $ref: "#/components/schemas/Severity" }
+        quantum_status: { $ref: "#/components/schemas/QuantumStatus" }
+        deprecated_after: { type: integer }
+        disallowed_after: { type: integer }
+        replacement: { type: string }
+        reasons: { type: array, items: { type: string } }
+    Finding:
+      type: object
+      description: Un uso de criptografía con su evaluación. Nunca contiene material de claves.
+      required: [id, algorithm_id, algorithm_name, primitive, location, asset, detector, confidence, assessment]
+      properties:
+        id: { type: string, description: Huella estable entre escaneos. }
+        algorithm_id: { type: string }
+        algorithm_name: { type: string }
+        key_bits: { type: integer }
+        curve: { type: string }
+        primitive: { $ref: "#/components/schemas/Primitive" }
+        location: { $ref: "#/components/schemas/Location" }
+        asset: { type: string }
+        detector: { type: string }
+        context: { type: string }
+        evidence: { type: string }
+        confidence: { type: string, enum: [alta, media, baja] }
+        certificate: { $ref: "#/components/schemas/CertInfo" }
+        in_tests: { type: boolean }
+        assessment: { $ref: "#/components/schemas/Assessment" }
+
+    Summary:
+      type: object
+      required: [asset, files_scanned, findings, readiness, by_severity, by_quantum_status, by_algorithm, certificates, in_tests]
+      properties:
+        asset: { type: string }
+        files_scanned: { type: integer }
+        findings: { type: integer }
+        readiness: { type: integer, minimum: 0, maximum: 100, description: "% de usos que ya no dependen de criptografía vulnerable o rota." }
+        by_severity: { $ref: "#/components/schemas/CountMap" }
+        by_quantum_status: { $ref: "#/components/schemas/CountMap" }
+        by_algorithm: { $ref: "#/components/schemas/CountMap" }
+        certificates: { type: integer }
+        in_tests: { type: integer }
+    ScanMeta:
+      type: object
+      required: [id, asset, root, started_at, finished_at, summary]
+      properties:
+        id: { type: string }
+        asset: { type: string }
+        root: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        summary: { $ref: "#/components/schemas/Summary" }
+    ScanDetail:
+      allOf:
+        - { $ref: "#/components/schemas/ScanMeta" }
+        - type: object
+          required: [new_findings, resolved_findings]
+          properties:
+            previous_scan_id: { type: string }
+            new_findings: { type: integer }
+            resolved_findings: { type: integer }
+    Scan:
+      type: object
+      description: Escaneo completo (formato de `cryptoinv scan --format json`).
+      required: [asset, findings]
+      properties:
+        id: { type: string }
+        asset: { type: string }
+        root: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        files_scanned: { type: integer }
+        findings: { type: array, items: { $ref: "#/components/schemas/Finding" } }
+    CreateScanRequest:
+      type: object
+      required: [path]
+      properties:
+        path: { type: string, description: Carpeta o archivo en el equipo del servidor. }
+        asset: { type: string, description: Nombre del sistema (por defecto, el de la carpeta). }
+
+    Point:
+      type: object
+      required: [scan_id, at, readiness, findings]
+      properties:
+        scan_id: { type: string }
+        at: { type: string, format: date-time }
+        readiness: { type: integer }
+        findings: { type: integer }
+    AssetStatus:
+      type: object
+      required: [asset, latest, latest_scan_id, latest_at, scans, trend]
+      properties:
+        asset: { type: string }
+        latest: { $ref: "#/components/schemas/Summary" }
+        latest_scan_id: { type: string }
+        latest_at: { type: string, format: date-time }
+        scans: { type: integer }
+        trend: { type: array, items: { $ref: "#/components/schemas/Point" } }
+    Overview:
+      type: object
+      required: [assets, readiness, findings, by_severity, by_quantum_status, by_algorithm, certificates, catalog_version]
+      properties:
+        assets: { type: array, items: { $ref: "#/components/schemas/AssetStatus" } }
+        readiness: { type: integer }
+        findings: { type: integer }
+        by_severity: { $ref: "#/components/schemas/CountMap" }
+        by_quantum_status: { $ref: "#/components/schemas/CountMap" }
+        by_algorithm: { $ref: "#/components/schemas/CountMap" }
+        certificates: { type: integer }
+        catalog_version: { type: string }
+
+    FindingsPage:
+      type: object
+      required: [items, total, facets]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Finding" } }
+        total: { type: integer }
+        facets:
+          type: object
+          required: [severity, quantum_status, algorithm, detector]
+          properties:
+            severity: { $ref: "#/components/schemas/CountMap" }
+            quantum_status: { $ref: "#/components/schemas/CountMap" }
+            algorithm: { $ref: "#/components/schemas/CountMap" }
+            detector: { $ref: "#/components/schemas/CountMap" }
+
+    PlanItem:
+      type: object
+      required: [id, wave, title, why, algorithm_id, algorithm, primitive, replacement, findings, files, max_score, severity, effort, tests_only, locations]
+      properties:
+        id: { type: string }
+        wave: { type: integer, enum: [1, 2, 3] }
+        title: { type: string }
+        why: { type: string }
+        algorithm_id: { type: string }
+        algorithm: { type: string }
+        primitive: { $ref: "#/components/schemas/Primitive" }
+        replacement: { type: string }
+        findings: { type: integer }
+        files: { type: integer }
+        max_score: { type: integer }
+        severity: { $ref: "#/components/schemas/Severity" }
+        effort: { type: string, enum: [S, M, L] }
+        tests_only: { type: boolean }
+        locations: { type: array, items: { $ref: "#/components/schemas/Location" } }
+    Wave:
+      type: object
+      required: [number, title, deadline, items]
+      properties:
+        number: { type: integer }
+        title: { type: string }
+        deadline: { type: string }
+        items: { type: array, items: { $ref: "#/components/schemas/PlanItem" } }
+    MigrationPlan:
+      type: object
+      required: [scan_id, asset, waves, excluded]
+      properties:
+        scan_id: { type: string }
+        asset: { type: string }
+        waves: { type: array, items: { $ref: "#/components/schemas/Wave" } }
+        excluded: { type: integer, description: Usos que no requieren acción. }
+
+    Certificate:
+      allOf:
+        - { $ref: "#/components/schemas/CertInfo" }
+        - type: object
+          required: [finding_id, path, line, key_algorithm, severity, score, days_left, weak_signature_hash]
+          properties:
+            finding_id: { type: string }
+            path: { type: string }
+            line: { type: integer }
+            key_algorithm: { type: string }
+            key_bits: { type: integer }
+            curve: { type: string }
+            severity: { $ref: "#/components/schemas/Severity" }
+            score: { type: integer }
+            days_left: { type: integer }
+            in_tests: { type: boolean }
+            weak_signature_hash: { type: boolean }
