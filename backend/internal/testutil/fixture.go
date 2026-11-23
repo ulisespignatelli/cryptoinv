@@ -51,3 +51,11 @@ func Project(t testing.TB) string {
 	}
 	return dir
 }
+
+// Remove borra un archivo del proyecto de prueba.
+func Remove(t testing.TB, dir, rel string) {
+	t.Helper()
+	if err := os.Remove(filepath.Join(dir, filepath.FromSlash(rel))); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/ulisespignatelli/cryptoinv/backend/internal/adapters/export"
+	"github.com/ulisespignatelli/cryptoinv/backend/internal/adapters/store"
 	"github.com/ulisespignatelli/cryptoinv/backend/internal/app"
 	"github.com/ulisespignatelli/cryptoinv/backend/internal/domain"
 )
@@ -25,6 +26,8 @@ const usage = `cryptoinv — inventario criptográfico y preparación post-cuán
 
 Uso:
   cryptoinv scan [opciones] RUTA     escanea una carpeta o archivo
+  cryptoinv serve [opciones] [RUTA…] levanta la API y el panel web (escanea las RUTAS al iniciar)
+  cryptoinv snapshot --out DIR       exporta los escaneos guardados como JSON estático (demo del panel)
   cryptoinv catalog                  muestra el catálogo de algoritmos y fechas NIST
   cryptoinv version
 
@@ -39,6 +42,15 @@ Opciones de scan:
                           incluyen, marcados y con menos peso)
   --fail-on SEVERIDAD     termina con código 1 si hay hallazgos de esa severidad o mayor
                           (critica | alta | media | baja), útil en CI
+  --save                  guarda el escaneo en la carpeta de datos (lo muestra el panel)
+  --data CARPETA          carpeta de datos (por defecto .cryptoinv)
+
+Opciones de serve:
+  --addr DIRECCIÓN        dónde escuchar (por defecto 127.0.0.1:8080)
+  --data CARPETA          carpeta de datos (por defecto .cryptoinv)
+  --token TOKEN           exige este token para modificar datos (obligatorio si no es localhost;
+                          también se puede pasar en la variable CRYPTOINV_TOKEN)
+  --no-scan               no permite escanear rutas desde el panel (solo ver e importar)
 `
 
 func main() {
@@ -64,6 +76,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, err
 	switch args[0] {
 	case "scan":
 		return scanCmd(ctx, args[1:], stdout, stderr)
+	case "serve":
+		return serveCmd(ctx, args[1:], stderr)
+	case "snapshot":
+		return snapshotCmd(ctx, args[1:], stderr)
 	case "catalog":
 		return catalogCmd(stdout)
 	case "version", "--version", "-v":
@@ -88,6 +104,8 @@ func scanCmd(ctx context.Context, args []string, stdout, stderr io.Writer) (int,
 	mig := fs.Int("migration-years", 3, "")
 	failOn := fs.String("fail-on", "", "")
 	skipTests := fs.Bool("skip-tests", false, "")
+	save := fs.Bool("save", false, "")
+	data := fs.String("data", ".cryptoinv", "")
 	var excludes multi
 	fs.Var(&excludes, "exclude", "")
 	if err := fs.Parse(reorder(args)); err != nil {
@@ -122,6 +140,16 @@ func scanCmd(ctx context.Context, args []string, stdout, stderr io.Writer) (int,
 	if err := export.Write(w, *format, sc, s.Catalog, version); err != nil {
 		return 2, err
 	}
+	if *save {
+		repo, err := store.OpenFileStore(*data)
+		if err != nil {
+			return 1, err
+		}
+		if err := repo.Save(ctx, sc); err != nil {
+			return 1, err
+		}
+		fmt.Fprintf(stderr, "escaneo %s guardado en %s\n", sc.ID, *data)
+	}
 	if *output != "" {
 		sum := app.Summarize(sc)
 		fmt.Fprintf(stderr, "%d usos en %d archivos · preparación %d%% · escrito en %s\n", sum.Findings, sum.Files, sum.Readiness, *output)
@@ -140,7 +168,7 @@ func scanCmd(ctx context.Context, args []string, stdout, stderr io.Writer) (int,
 	return 0, nil
 }
 
-var boolFlags = map[string]bool{"skip-tests": true}
+var boolFlags = map[string]bool{"skip-tests": true, "save": true, "no-scan": true}
 
 // reorder permite poner las opciones despues de la ruta ("scan . --format json").
 func reorder(args []string) []string {
